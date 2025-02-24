@@ -6,12 +6,15 @@ import (
 	"os"
 	"time"
 
+	_ "github.com/brightkut/rest-api-go-fiber/docs"
+	jwtware "github.com/gofiber/contrib/jwt"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/swagger"
-	"github.com/joho/godotenv"
-	_"github.com/brightkut/rest-api-go-fiber/docs"
-	jwtware "github.com/gofiber/contrib/jwt"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/joho/godotenv"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // Book data model
@@ -53,6 +56,14 @@ func loginMiddleware(c *fiber.Ctx) error{
 	return c.Next()
 }
 
+const (
+	host = "localhost"
+	port = 5432
+	user = "postgres"
+	password = "admin"
+	dbname = "ticket"
+)
+
 // @title Book API
 // @description This is sample book API.
 // @version 1.0
@@ -63,6 +74,44 @@ func loginMiddleware(c *fiber.Ctx) error{
 // @in header
 // @name Authorization
 func main() {
+
+	newLogger := logger.New(
+		log.New(os.Stdout, "\r\n", log.LstdFlags), // io writer
+		logger.Config{
+		  SlowThreshold:              time.Second,   // Slow SQL threshold
+		  LogLevel:                   logger.Info, // Log level	
+		  Colorful:                  true,
+		},
+	  )
+
+	  
+	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", host, port, user , password , dbname)
+
+	db, err:= gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: newLogger,
+	})
+
+	if err != nil{
+		panic("failed to connect DB")
+	}
+	// auto create and update table but not for delete case
+	db.AutoMigrate(&Ticket{})
+	fmt.Printf("Connect DB successfully")
+
+	// create ticket
+	ticket := &Ticket{Name: "Ticket1", Price: 100}
+	
+	createTicket(db, ticket)
+
+	ticket2 := getTicket(db, 1)
+	ticket2.Name = "Agoda Ticket"
+	ticket2.Price = 200
+
+	updateTicket(db, ticket2)
+
+	getTicket(db, 1)
+
+	deleteTicket(db, 1)
 	// create app
 	app := fiber.New()
 

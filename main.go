@@ -7,7 +7,6 @@ import (
 	"time"
 
 	_ "github.com/brightkut/rest-api-go-fiber/docs"
-	jwtware "github.com/gofiber/contrib/jwt"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/swagger"
 	"github.com/golang-jwt/jwt/v5"
@@ -27,16 +26,6 @@ type Book struct {
 // Book DB
 var books []Book
 
-type User struct{
-	Email string `json:"email"`
-	Password string `json:"password"`
-}
-
-var user1 = User{
-	Email: "test@gmail.com",
-	Password: "1234",
-}
-
 func logMiddleware(c *fiber.Ctx) error {
 	startTime := time.Now()
 
@@ -45,14 +34,22 @@ func logMiddleware(c *fiber.Ctx) error {
 	return c.Next()
 }
 
-func loginMiddleware(c *fiber.Ctx) error{
-	user := c.Locals("user").(*jwt.Token)
-	claims := user.Claims.(jwt.MapClaims)
-	email := claims["email"].(string)
+func  loginMiddleware(c *fiber.Ctx) error{
+	cookie := c.Cookies("jwt")
+	jwtSecretKey := os.Getenv("JWT_SECRET")
 
-	if email != "test@gmail.com"{
-		return fiber.ErrUnauthorized
+	token, err := jwt.ParseWithClaims(cookie, jwt.MapClaims{}, func(t *jwt.Token) (interface{}, error) {
+		return []byte(jwtSecretKey), nil
+	})
+
+	if err != nil || !token.Valid {
+		return c.SendStatus(fiber.StatusUnauthorized)
 	}
+
+	claim := token.Claims.(jwt.MapClaims)
+
+	fmt.Print(claim)
+
 	return c.Next()
 }
 
@@ -63,6 +60,8 @@ const (
 	password = "admin"
 	dbname = "ticket"
 )
+
+var db *gorm.DB 
 
 // @title Book API
 // @description This is sample book API.
@@ -83,11 +82,11 @@ func main() {
 		  Colorful:                  true,
 		},
 	  )
-
+	var err error
 	  
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", host, port, user , password , dbname)
 
-	db, err:= gorm.Open(postgres.Open(dsn), &gorm.Config{
+	db, err= gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: newLogger,
 	})
 
@@ -95,23 +94,18 @@ func main() {
 		panic("failed to connect DB")
 	}
 	// auto create and update table but not for delete case
-	db.AutoMigrate(&Ticket{})
+	db.AutoMigrate(&Ticket{}, &User{})
 	fmt.Printf("Connect DB successfully")
 
 	// create ticket
-	ticket := &Ticket{Name: "Ticket1", Price: 100}
-	
-	createTicket(db, ticket)
-
-	ticket2 := getTicket(db, 1)
-	ticket2.Name = "Agoda Ticket"
-	ticket2.Price = 200
-
-	updateTicket(db, ticket2)
-
-	getTicket(db, 1)
-
-	deleteTicket(db, 1)
+	// ticket := &Ticket{Name: "Ticket1", Price: 100}
+	// createTicket(db, ticket)
+	// ticket2 := getTicket(db, 1)
+	// ticket2.Name = "Agoda Ticket"
+	// ticket2.Price = 200
+	// updateTicket(db, ticket2)
+	// getTicket(db, 1)
+	// deleteTicket(db, 1)
 	// create app
 	app := fiber.New()
 
@@ -132,11 +126,12 @@ func main() {
 
 	app.Get("/health", healthCheck)
 	app.Post("/login", login)
+	app.Post("/register", register)
 
 	// setup jwt middleware
-	app.Use(jwtware.New(jwtware.Config{
-		SigningKey: jwtware.SigningKey{Key: []byte(os.Getenv("JWT_SECRET"))},
-	}))
+	// app.Use(jwtware.New(jwtware.Config{
+	// 	SigningKey: jwtware.SigningKey{Key: []byte(os.Getenv("JWT_SECRET"))},
+	// }))
 
 	// check token middleware
 	app.Use(loginMiddleware)
@@ -183,31 +178,38 @@ func login(c *fiber.Ctx) error{
 		return c.Status(fiber.StatusBadRequest).SendString(err.Error())
 	}
 
-	fmt.Print(user)
-
-	if user.Email != user1.Email || user.Password != user1.Password{
-		return fiber.ErrUnauthorized
-	}
-
-	// Create the Claims
-	claims := jwt.MapClaims{
-		"email":  user.Email,
-		"admin": true,
-		"exp":   time.Now().Add(time.Hour * 72).Unix(),
-	}
-
-	// Create token
-	token := jwt.NewWithClaims(jwt.SigningMethodHS512, claims)
-
-	// Generate encoded token and send it as response.
-	t, err := token.SignedString([]byte(os.Getenv("JWT_SECRET")))
+	token , err := loginUser(db, user)
 	
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).SendString(err.Error())
 	}
 
+	c.Cookie(&fiber.Cookie{
+		Name: "jwt",
+		Value: token,
+		Expires: time.Now().Add(time.Hour * 72),
+		HTTPOnly: true,
+	})
+
 	return c.JSON(fiber.Map{
 		"message": "Login success",
-		"token": t,
+	})
+}
+
+func register(c *fiber.Ctx)error{
+	user := new(User)
+
+	if err := c.BodyParser(user); err != nil{
+		return c.Status(fiber.StatusBadRequest).SendString(err.Error())
+	}	
+
+	err:= createUser(db, user)
+
+	if err != nil{
+		return c.SendStatus(fiber.StatusInternalServerError)
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Register success",
 	})
 }
